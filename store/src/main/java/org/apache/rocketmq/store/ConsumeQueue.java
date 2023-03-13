@@ -40,9 +40,16 @@ import org.apache.rocketmq.store.queue.FileQueueLifeCycle;
 import org.apache.rocketmq.store.queue.QueueOffsetAssigner;
 import org.apache.rocketmq.store.queue.ReferredIterator;
 
+/**
+ * TODO 存储偏移量的结构
+ */
 public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    /**
+     * ConsumeQueue 中用来存储消息偏移量的结构大小为 CQ_STORE_UNIT_SIZE，为20个字节
+     * 全局偏移 offset 8字节 消息长度 size 4字节 消息tag tagCode 8字节
+     */
     public static final int CQ_STORE_UNIT_SIZE = 20;
     public static final int MSG_TAG_OFFSET_INDEX = 12;
     private static final Logger LOG_ERROR = LoggerFactory.getLogger(LoggerName.STORE_ERROR_LOGGER_NAME);
@@ -764,6 +771,11 @@ public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
         }
     }
 
+    /**
+     * 根据开始点位进行拉取
+     * @param startIndex
+     * @return
+     */
     public SelectMappedBufferResult getIndexBuffer(final long startIndex) {
         int mappedFileSize = this.mappedFileSize;
         long offset = startIndex * CQ_STORE_UNIT_SIZE;
@@ -776,6 +788,11 @@ public class ConsumeQueue implements ConsumeQueueInterface, FileQueueLifeCycle {
         return null;
     }
 
+    /**
+     * TODO 根据开始点位进行拉取
+     * @param startOffset start index
+     * @return
+     */
     @Override
     public ReferredIterator<CqUnit> iterateFrom(long startOffset) {
         SelectMappedBufferResult sbr = getIndexBuffer(startOffset);

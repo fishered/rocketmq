@@ -18,8 +18,10 @@
 package org.apache.rocketmq.store;
 
 public class PutMessageContext {
+    //锁定的key 可以匹配到一个topic的一个queue
     private String topicQueueTableKey;
     private long[] phyPos;
+    //批量处理的数据数量
     private int batchSize;
 
     public PutMessageContext(String topicQueueTableKey) {

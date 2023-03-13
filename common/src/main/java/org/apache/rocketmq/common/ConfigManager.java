@@ -22,6 +22,10 @@ import org.apache.rocketmq.common.constant.LoggerName;
 import org.apache.rocketmq.logging.org.slf4j.Logger;
 import org.apache.rocketmq.logging.org.slf4j.LoggerFactory;
 
+/**
+ * 上层抽象的配置工厂，在broker启动时会根据组件依次加载，并将文件读取到变量中。例如consumerOffsetTable
+ * 抽象类下每一个manager加载对应的配置信息
+ */
 public abstract class ConfigManager {
     private static final Logger log = LoggerFactory.getLogger(LoggerName.COMMON_LOGGER_NAME);
 

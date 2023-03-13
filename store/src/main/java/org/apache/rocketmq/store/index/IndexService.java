@@ -208,12 +208,14 @@ public class IndexService {
     }
 
     public void buildIndex(DispatchRequest req) {
+        //尝试获取索引文件
         IndexFile indexFile = retryGetAndCreateIndexFile();
         if (indexFile != null) {
             long endPhyOffset = indexFile.getEndPhyOffset();
             DispatchRequest msg = req;
             String topic = msg.getTopic();
             String keys = msg.getKeys();
+            //索引是根据commitlog的offset构建的，如果当前的消息小于当前已经构建的最大点位，则认为它是重复的消息
             if (msg.getCommitLogOffset() < endPhyOffset) {
                 return;
             }
@@ -228,6 +230,9 @@ public class IndexService {
                     return;
             }
 
+            /**
+             * 生成索引
+             */
             if (req.getUniqKey() != null) {
                 indexFile = putKey(indexFile, msg, buildKey(topic, req.getUniqKey()));
                 if (indexFile == null) {

@@ -204,18 +204,30 @@ public class MappedFileQueue implements Swappable {
         return 0;
     }
 
+    /**
+     * TODO 预处理创建新的commitLog
+     * @return
+     */
     public MappedFile getLastMappedFile(final long startOffset, boolean needCreate) {
         long createOffset = -1;
+        /**
+         * 获取最新的mappedFile
+         */
         MappedFile mappedFileLast = getLastMappedFile();
 
+        //如果获取不到，则说明是第一次创建文件
         if (mappedFileLast == null) {
             createOffset = startOffset - (startOffset % this.mappedFileSize);
         }
 
+        /**
+         * 如果文件写满了，则需要计算下一个文件的初始量 其实就是上一个文件最后的偏移量的下一个
+         */
         if (mappedFileLast != null && mappedFileLast.isFull()) {
             createOffset = mappedFileLast.getFileFromOffset() + this.mappedFileSize;
         }
 
+        //创建新的commitLog
         if (createOffset != -1 && needCreate) {
             return tryCreateMappedFile(createOffset);
         }
@@ -259,6 +271,7 @@ public class MappedFileQueue implements Swappable {
     protected MappedFile doCreateMappedFile(String nextFilePath, String nextNextFilePath) {
         MappedFile mappedFile = null;
 
+        //处理预创建的commitLog前置动作，并将其添加到mappedFile队列中
         if (this.allocateMappedFileService != null) {
             mappedFile = this.allocateMappedFileService.putRequestAndReturnMappedFile(nextFilePath,
                     nextNextFilePath, this.mappedFileSize);
@@ -333,6 +346,10 @@ public class MappedFileQueue implements Swappable {
         return -1;
     }
 
+    /**
+     * 获取目前的消费位置
+     * @return
+     */
     public long getMaxOffset() {
         MappedFile mappedFile = getLastMappedFile();
         if (mappedFile != null) {
@@ -553,6 +570,10 @@ public class MappedFileQueue implements Swappable {
     }
 
     /**
+     * 根据offset查找对应的mappedFile，其实就是通过commitLog的大小和文件名，过滤出当前存储的文件
+     * 如果连第一个都没有，那么就创建第一个fileChannel
+     */
+    /**
      * Finds a mapped file by offset.
      *
      * @param offset Offset.
@@ -572,6 +593,7 @@ public class MappedFileQueue implements Swappable {
                         this.mappedFileSize,
                         this.mappedFiles.size());
                 } else {
+                    //计算当前应该在哪个文件上 默认一个commitlog大小是 1024 * 1024 * 1024
                     int index = (int) ((offset / this.mappedFileSize) - (firstMappedFile.getFileFromOffset() / this.mappedFileSize));
                     MappedFile targetFile = null;
                     try {

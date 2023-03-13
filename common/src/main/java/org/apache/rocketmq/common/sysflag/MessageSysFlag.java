@@ -65,8 +65,8 @@ public class MessageSysFlag {
         return CompressionType.findByValue((flag & COMPRESSION_TYPE_COMPARATOR) >> 8);
     }
 
+
     public static boolean check(int flag, int expectedFlag) {
         return (flag & expectedFlag) != 0;
     }
-
 }

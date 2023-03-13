@@ -47,6 +47,9 @@ import org.apache.rocketmq.remoting.rpc.RpcResponse;
 
 import static org.apache.rocketmq.remoting.protocol.RemotingCommand.buildErrorResponse;
 
+/**
+ *  TODO 消费者的处理器 提供了进行消费进度持久化、查询对应组消费进度等
+ */
 public class ConsumerManageProcessor implements NettyRequestProcessor {
     private static final Logger LOGGER = LoggerFactory.getLogger(LoggerName.BROKER_LOGGER_NAME);
     private final BrokerController brokerController;
@@ -141,6 +144,13 @@ public class ConsumerManageProcessor implements NettyRequestProcessor {
         }
     }
 
+    /**
+     * 更新消费者消费进度 集群模式 这里也看到其实偏移量也就是在commitOffset中保存了每个queueId的offSet 其实在broker中通过启动单独的异步线程去定时刷新到磁盘
+     * @see BrokerController#initializeBrokerScheduledTasks() this.consumerOffsetManager.persist();
+     * 默认异步刷盘方式同理 如果在rebalance时没有将offSet刷新保存到broker中，同样会存在重复消费
+     * @return
+     * @throws RemotingCommandException
+     */
     private RemotingCommand updateConsumerOffset(ChannelHandlerContext ctx, RemotingCommand request)
         throws RemotingCommandException {
 
@@ -194,6 +204,7 @@ public class ConsumerManageProcessor implements NettyRequestProcessor {
             }
         }
 
+        //接收client同步offSet同步到本地变量中，等待下一次异步线程刷新到磁盘
         this.brokerController.getConsumerOffsetManager().commitOffset(
             RemotingHelper.parseChannelRemoteAddr(ctx.channel()), group, topic, queueId, offset);
         response.setCode(ResponseCode.SUCCESS);

@@ -185,6 +185,9 @@ public class IndexFile {
         return result;
     }
 
+    /**
+     * TODO indexFile下查找commitlog文件点位代码
+     */
     public void selectPhyOffset(final List<Long> phyOffsets, final String key, final int maxNum,
                                 final long begin, final long end) {
         if (this.mappedFile.hold()) {
@@ -193,6 +196,7 @@ public class IndexFile {
             int absSlotPos = IndexHeader.INDEX_HEADER_SIZE + slotPos * hashSlotSize;
 
             try {
+                //获取相同 hash 值 key 的第一个 IndexItme 存储位置，即链表的首节点
                 int slotValue = this.mappedByteBuffer.getInt(absSlotPos);
                 if (slotValue <= invalidIndex || slotValue > this.indexHeader.getIndexCount()
                     || this.indexHeader.getIndexCount() <= 1) {

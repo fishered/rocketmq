@@ -18,9 +18,13 @@ package org.apache.rocketmq.example.simple;
 
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.client.producer.DefaultMQProducer;
+import org.apache.rocketmq.client.producer.MessageQueueSelector;
 import org.apache.rocketmq.client.producer.SendResult;
 import org.apache.rocketmq.common.message.Message;
+import org.apache.rocketmq.common.message.MessageQueue;
+
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 
 public class Producer {
 
@@ -41,6 +45,15 @@ public class Producer {
             try {
                 Message msg = new Message(TOPIC, TAG, "OrderID188", "Hello world".getBytes(StandardCharsets.UTF_8));
                 SendResult sendResult = producer.send(msg);
+
+                producer.send(msg, new MessageQueueSelector() {
+                    @Override
+                    public MessageQueue select(List<MessageQueue> mqs, Message msg, Object arg) {
+                        Integer id = 10;//业务id
+                        return mqs.get(id % mqs.size());
+                    }
+                }, null);
+
                 System.out.printf("%s%n", sendResult);
             } catch (Exception e) {
                 e.printStackTrace();

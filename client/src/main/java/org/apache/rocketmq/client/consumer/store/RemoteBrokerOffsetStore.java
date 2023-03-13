@@ -27,6 +27,7 @@ import org.apache.rocketmq.client.exception.MQBrokerException;
 import org.apache.rocketmq.client.exception.MQClientException;
 import org.apache.rocketmq.client.exception.OffsetNotFoundException;
 import org.apache.rocketmq.client.impl.FindBrokerResult;
+import org.apache.rocketmq.client.impl.consumer.PullRequest;
 import org.apache.rocketmq.client.impl.factory.MQClientInstance;
 import org.apache.rocketmq.common.MixAll;
 import org.apache.rocketmq.common.UtilAll;
@@ -56,6 +57,16 @@ public class RemoteBrokerOffsetStore implements OffsetStore {
     public void load() {
     }
 
+    /** TODO 消费同步模式 重要
+     * 集群消费更新节点 其实可以看出在这里不管广播还是集群都是存储在了offsetTable中，其实会在后续推送到broker进行保存的
+     * 这里有个误区，我们知道集群模式 一个queue会对应到一个消费者进行消费 一个消费者可以绑定多个队列进行pull 如果这里不存在rebalance时，这个消费者不会变化，它延后在注册心跳同步offSet是完全没有问题的
+     * 但是如果这里触发了rebalance，这个消息可能在消费没来得及相应的情况下 进行了消费重排，这时这个队列在这个消费者下可能就是isDrop，但是新的消费者拉取消息时不会从当前的点位消费，而是从上一次成功提交
+     * 的点位进行消费！
+     * 当前保存的点位信息可能在同步或拉取时推送给broker
+     * @see RemoteBrokerOffsetStore#persistAll(Set)
+     * 在拉取时也会将当前的消费点位传入broker
+     * @see org.apache.rocketmq.client.impl.consumer.DefaultMQPushConsumerImpl#pullMessage(PullRequest)
+     */
     @Override
     public void updateOffset(MessageQueue mq, long offset, boolean increaseOnly) {
         if (mq != null) {

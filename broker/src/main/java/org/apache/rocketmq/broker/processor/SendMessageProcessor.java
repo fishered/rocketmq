@@ -73,6 +73,9 @@ import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.LABEL_MES
 import static org.apache.rocketmq.broker.metrics.BrokerMetricsConstant.LABEL_TOPIC;
 import static org.apache.rocketmq.remoting.protocol.RemotingCommand.buildErrorResponse;
 
+/**
+ * SendMessageProcessor 是client做sendMessage动作时，broker处理发送消息的加工者
+ */
 public class SendMessageProcessor extends AbstractSendMessageProcessor implements NettyRequestProcessor {
 
     public SendMessageProcessor(final BrokerController brokerController) {
@@ -87,6 +90,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
             case RequestCode.CONSUMER_SEND_MSG_BACK:
                 return this.consumerSendMsgBack(ctx, request);
             default:
+                //发送成功的处理
                 SendMessageRequestHeader requestHeader = parseRequestHeader(request);
                 if (requestHeader == null) {
                     return null;
@@ -98,6 +102,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 }
                 sendMessageContext = buildMsgContext(ctx, requestHeader, request);
                 try {
+                    //加载前置钩子函数
                     this.executeSendMessageHookBefore(sendMessageContext);
                 } catch (AbortProcessException e) {
                     final RemotingCommand errorResponse = RemotingCommand.createResponseCommand(e.getResponseCode(), e.getErrorMessage());
@@ -106,6 +111,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
                 }
 
                 RemotingCommand response;
+                //针对单消息处理和批量消息处理，并执行后置钩子函数
                 if (requestHeader.isBatch()) {
                     response = this.sendBatchMessage(ctx, request, sendMessageContext, requestHeader, mappingContext,
                         (ctx1, response1) -> executeSendMessageHookAfter(response1, ctx1));
@@ -231,12 +237,14 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
 
         final SendMessageResponseHeader responseHeader = (SendMessageResponseHeader) response.readCustomHeader();
-
+        //获取消息内容
         final byte[] body = request.getBody();
 
+        //获取消息指定队列id
         int queueIdInt = requestHeader.getQueueId();
         TopicConfig topicConfig = this.brokerController.getTopicConfigManager().selectTopicConfig(requestHeader.getTopic());
 
+        //如果队列id小于0，默认是非法的id，则重新分配一个队列进行绑定
         if (queueIdInt < 0) {
             queueIdInt = randomQueueId(topicConfig.getWriteQueueNums());
         }
@@ -246,6 +254,7 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         msgInner.setQueueId(queueIdInt);
 
         Map<String, String> oriProps = MessageDecoder.string2messageProperties(requestHeader.getProperties());
+        //如果是重试消息或达到最大次数进入死信队列的消息，则直接返回
         if (!handleRetryAndDLQ(requestHeader, response, request, msgInner, topicConfig, oriProps)) {
             return response;
         }
@@ -285,6 +294,9 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         boolean sendTransactionPrepareMessage = false;
         if (Boolean.parseBoolean(traFlag)
             && !(msgInner.getReconsumeTimes() > 0 && msgInner.getDelayTimeLevel() > 0)) { //For client under version 4.6.1
+            /**
+             * 如果当前消息已经被消费者消费了不止一次，或者它的消费次数大于0，说明它已经是一个重复消费的消息了，如果它是一个事务消息，这是不允许的
+             */
             if (this.brokerController.getBrokerConfig().isRejectTransactionMessage()) {
                 response.setCode(ResponseCode.NO_PERMISSION);
                 response.setRemark(
@@ -297,9 +309,17 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
         long beginTimeMillis = this.brokerController.getMessageStore().now();
 
+        /**
+         * TODO 这是才是针对消息做的处理，根据broker同步或异步模型，则针对事务消息和普通消息做消息的处理
+         */
         if (brokerController.getBrokerConfig().isAsyncSendEnable()) {
             CompletableFuture<PutMessageResult> asyncPutMessageFuture;
+            //putMessage 是处理store 消息存储的核心
             if (sendTransactionPrepareMessage) {
+                /**
+                 * @see org.apache.rocketmq.broker.transaction.queue.TransactionalMessageServiceImpl.asyncPrepareMessage
+                 * 将消息包装成half消息
+                 */
                 asyncPutMessageFuture = this.brokerController.getTransactionalMessageService().asyncPrepareMessage(msgInner);
             } else {
                 asyncPutMessageFuture = this.brokerController.getMessageStore().asyncPutMessage(msgInner);
@@ -307,6 +327,9 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
 
             final int finalQueueIdInt = queueIdInt;
             final MessageExtBrokerInner finalMsgInner = msgInner;
+            /**
+             * 处理完成后，异步回调handlePutMessageResult，如果是同步模型，则阻塞handlePutMessageResult等待处理，这里跟下文else中处理方式类似，只是采用非阻塞的异步任务处理
+             */
             asyncPutMessageFuture.thenAcceptAsync(putMessageResult -> {
                 RemotingCommand responseFuture =
                     handlePutMessageResult(putMessageResult, response, request, finalMsgInner, responseHeader, sendMessageContext,
@@ -331,6 +354,9 @@ public class SendMessageProcessor extends AbstractSendMessageProcessor implement
         }
     }
 
+    /**
+     * 处理putMessage的返回，在异步线程挂起后会将超时返回给调用方
+     */
     private RemotingCommand handlePutMessageResult(PutMessageResult putMessageResult, RemotingCommand response,
         RemotingCommand request, MessageExt msg, SendMessageResponseHeader responseHeader,
         SendMessageContext sendMessageContext, ChannelHandlerContext ctx, int queueIdInt, long beginTimeMillis,

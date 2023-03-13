@@ -58,7 +58,12 @@ import org.apache.rocketmq.store.util.LibC;
 import sun.misc.Unsafe;
 import sun.nio.ch.DirectBuffer;
 
+/**
+ * TODO store消息处理的核心对象 mappedFile封装了对消息处理 写入
+ *      NIO 的文件到磁盘的处理工具
+ */
 public class DefaultMappedFile extends AbstractMappedFile {
+    // 操作系统数据页 4K，unix系列通常是这个大小
     public static final int OS_PAGE_SIZE = 1024 * 4;
     public static final Unsafe UNSAFE = getUnsafe();
     private static final Method IS_LOADED_METHOD;
@@ -66,28 +71,41 @@ public class DefaultMappedFile extends AbstractMappedFile {
 
     protected static final Logger log = LoggerFactory.getLogger(LoggerName.STORE_LOGGER_NAME);
 
+    // mq总共分配的映射文件内存大小
     protected static final AtomicLong TOTAL_MAPPED_VIRTUAL_MEMORY = new AtomicLong(0);
 
+    // mq总共创建的内存文件映射数量
     protected static final AtomicInteger TOTAL_MAPPED_FILES = new AtomicInteger(0);
 
     protected static final AtomicIntegerFieldUpdater<DefaultMappedFile> WROTE_POSITION_UPDATER;
     protected static final AtomicIntegerFieldUpdater<DefaultMappedFile> COMMITTED_POSITION_UPDATER;
     protected static final AtomicIntegerFieldUpdater<DefaultMappedFile> FLUSHED_POSITION_UPDATER;
 
+    // 当前数据的写入位置指针，下次写数据从此开始写入
     protected volatile int wrotePosition;
+    // 当前数据的提交指针，指针之前的数据已提交到fileChannel，commitPos~writePos之间的数据是还未提交到fileChannel的
     protected volatile int committedPosition;
+    // 当前数据的刷盘指针，指针之前的数据已落盘，commitPos~flushedPos之间的数据是还未落盘的
     protected volatile int flushedPosition;
+    //文件大小 字节
     protected int fileSize;
+    // TODO 磁盘文件的内存文件通道对象 也是mmap的方式体现
     protected FileChannel fileChannel;
     /**
      * Message will put to here first, and then reput to FileChannel if writeBuffer is not null.
      */
+    // 异步刷盘时数据先写入writeBuf，由CommitRealTime线程定时200ms提交到fileChannel内存，再由FlushRealTime线程定时500ms刷fileChannel落盘
     protected ByteBuffer writeBuffer = null;
+    // 堆外内存池，服务于异步刷盘机制，为了减少内存申请和销毁的时间，提前向OS申请并锁定一块对外内存池，writeBuf就从这里获取
     protected TransientStorePool transientStorePool = null;
+    // 文件起始的字节
     protected String fileName;
+    // 文件的初始消费点位，跟文件的命名相关 例如 00000000000000000000 就代表从0开始，默认一个commitLog是1G 大小，那么超过之后会生成新的commitLog 文件名称就是当前文件起始的偏移量
     protected long fileFromOffset;
     protected File file;
+    // 磁盘文件的内存映射对象，同步刷盘时直接将数据写入到mapedBuf
     protected MappedByteBuffer mappedByteBuffer;
+    // 最近操作的时间戳
     protected volatile long storeTimestamp = 0;
     protected boolean firstCreateInQueue = false;
     private long lastFlushTime = -1L;
@@ -142,6 +160,12 @@ public class DefaultMappedFile extends AbstractMappedFile {
         this.transientStorePool = transientStorePool;
     }
 
+    /**
+     * 初始化CommitLog 文件名则为偏移量
+     * @param fileName
+     * @param fileSize
+     * @throws IOException
+     */
     private void init(final String fileName, final int fileSize) throws IOException {
         this.fileName = fileName;
         this.fileSize = fileSize;
@@ -152,8 +176,10 @@ public class DefaultMappedFile extends AbstractMappedFile {
         UtilAll.ensureDirOK(this.file.getParent());
 
         try {
+            //TODO mmap技术 实现fileChannel 文件零拷贝
             this.fileChannel = new RandomAccessFile(this.file, "rw").getChannel();
             this.mappedByteBuffer = this.fileChannel.map(MapMode.READ_WRITE, 0, fileSize);
+            //文件内存使用量和fileChannel的初始化数量
             TOTAL_MAPPED_VIRTUAL_MEMORY.addAndGet(fileSize);
             TOTAL_MAPPED_FILES.incrementAndGet();
             ok = true;
@@ -226,16 +252,25 @@ public class DefaultMappedFile extends AbstractMappedFile {
         return fileChannel;
     }
 
+    /**
+     * TODO append 统一为fileChannel 对文件的写入 提供了单消息和批量消息的写入
+     */
     public AppendMessageResult appendMessage(final ByteBuffer byteBufferMsg, final CompactionAppendMsgCallback cb) {
         assert byteBufferMsg != null;
         assert cb != null;
 
+        //获取当前写入的位置
         int currentPos = WROTE_POSITION_UPDATER.get(this);
+        //当前写入的位置需要比文件最大的位数要小
         if (currentPos < this.fileSize) {
+            //根据appendMessageBuffer选择是否写入writeBuffer还是mapperByteBuffer 异步刷盘应该写入writeBuffer 再定时写到mapperBuffer
             ByteBuffer byteBuffer = appendMessageBuffer().slice();
+            //修改写入位置
             byteBuffer.position(currentPos);
             AppendMessageResult result = cb.doAppend(byteBuffer, this.fileFromOffset, this.fileSize - currentPos, byteBufferMsg);
+            //AtomicInteger累计更新写入的位置 WROTE_POSITION_UPDATER其实就是当前已经存储文件的字节
             WROTE_POSITION_UPDATER.addAndGet(this, result.getWroteBytes());
+            //更新最后一次写入时间
             this.storeTimestamp = result.getStoreTimestamp();
             return result;
         }
@@ -249,12 +284,17 @@ public class DefaultMappedFile extends AbstractMappedFile {
         return appendMessagesInner(msg, cb, putMessageContext);
     }
 
+    //批量消息
     @Override
     public AppendMessageResult appendMessages(final MessageExtBatch messageExtBatch, final AppendMessageCallback cb,
         PutMessageContext putMessageContext) {
         return appendMessagesInner(messageExtBatch, cb, putMessageContext);
     }
 
+    /**
+     * 批量消息的写入，原理跟appendMessage类似
+     * @return
+     */
     public AppendMessageResult appendMessagesInner(final MessageExt messageExt, final AppendMessageCallback cb,
         PutMessageContext putMessageContext) {
         assert messageExt != null;
@@ -348,27 +388,38 @@ public class DefaultMappedFile extends AbstractMappedFile {
     /**
      * @return The current flushed position
      */
+    /**
+     * TODO 刷盘的核心处理
+     * @param flushLeastPages the least pages to flush 指定最小的刷盘页数
+     * @return
+     */
     @Override
     public int flush(final int flushLeastPages) {
         if (this.isAbleToFlush(flushLeastPages)) {
             if (this.hold()) {
+                //先获取当前处理的位置
                 int value = getReadPosition();
 
                 try {
                     this.mappedByteBufferAccessCountSinceLastSwap++;
 
                     //We only append data to fileChannel or mappedByteBuffer, never both.
+                    // 异步刷盘的数据会从writeBuf写到fileChannel，直接将fileChannel数据刷盘
                     if (writeBuffer != null || this.fileChannel.position() != 0) {
                         this.fileChannel.force(false);
                     } else {
+                        // 同步刷盘的数据每一次都会直接写入mapBuf
                         this.mappedByteBuffer.force();
                     }
+                    //更新最后刷新的时间
                     this.lastFlushTime = System.currentTimeMillis();
                 } catch (Throwable e) {
                     log.error("Error occurred when force data to disk.", e);
                 }
 
+                //更新最后操作后的位置
                 FLUSHED_POSITION_UPDATER.set(this, value);
+                // 将refCount--，当refCount=0时会释放mapBuf的内存
                 this.release();
             } else {
                 log.warn("in flush, hold failed, flush offset = " + FLUSHED_POSITION_UPDATER.get(this));
@@ -382,14 +433,17 @@ public class DefaultMappedFile extends AbstractMappedFile {
     public int commit(final int commitLeastPages) {
         if (writeBuffer == null) {
             //no need to commit data to file channel, so just regard wrotePosition as committedPosition.
+            //同步状态下 无需将数据提交到文件通道，所以只需将wrotePosition视为committedPosition即可
             return WROTE_POSITION_UPDATER.get(this);
         }
 
         //no need to commit data to file channel, so just set committedPosition to wrotePosition.
+        //不需要将数据提交到文件通道，所以只需将committedPosition设置为wrotePosition即可 如果异步的缓存池中还有数据并准备提交，将更新位置
         if (transientStorePool != null && !transientStorePool.isRealCommit()) {
             COMMITTED_POSITION_UPDATER.set(this, WROTE_POSITION_UPDATER.get(this));
         } else if (this.isAbleToCommit(commitLeastPages)) {
             if (this.hold()) {
+                //提交脏页 释放
                 commit0();
                 this.release();
             } else {
@@ -398,6 +452,7 @@ public class DefaultMappedFile extends AbstractMappedFile {
         }
 
         // All dirty data has been committed to FileChannel.
+        //所有脏数据都已提交到FileChannel 则重置writeBuffer
         if (writeBuffer != null && this.transientStorePool != null && this.fileSize == COMMITTED_POSITION_UPDATER.get(this)) {
             this.transientStorePool.returnBuffer(writeBuffer);
             this.writeBuffer = null;
@@ -417,6 +472,7 @@ public class DefaultMappedFile extends AbstractMappedFile {
                 byteBuffer.limit(writePos);
                 this.fileChannel.position(lastCommittedPosition);
                 this.fileChannel.write(byteBuffer);
+                //更新指针位置
                 COMMITTED_POSITION_UPDATER.set(this, writePos);
             } catch (Throwable e) {
                 log.error("Error occurred when commit data to FileChannel.", e);
@@ -469,6 +525,12 @@ public class DefaultMappedFile extends AbstractMappedFile {
         return this.fileSize == WROTE_POSITION_UPDATER.get(this);
     }
 
+    /**
+     * TODO 根据点位和文件读取对应消息流的核心代码
+     * @param pos the given position
+     * @param size the size of the returned sub-region
+     * @return
+     */
     @Override
     public SelectMappedBufferResult selectMappedBuffer(int pos, int size) {
         int readPosition = getReadPosition();

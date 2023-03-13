@@ -75,6 +75,9 @@ public class LocalFileOffsetStore implements OffsetStore {
         }
     }
 
+    /**
+     * 这里是更新广播消费的节点 其实就是更新offSetTable
+     */
     @Override
     public void updateOffset(MessageQueue mq, long offset, boolean increaseOnly) {
         if (mq != null) {

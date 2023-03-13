@@ -1314,8 +1314,8 @@ public class BrokerConfig extends BrokerIdentity {
     public boolean isAsyncSendEnable() {
         return asyncSendEnable;
     }
-
     public void setAsyncSendEnable(boolean asyncSendEnable) {
+
         this.asyncSendEnable = asyncSendEnable;
     }
 

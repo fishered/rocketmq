@@ -50,6 +50,13 @@ public class AllocateMappedFileService extends ServiceThread {
         this.messageStore = messageStore;
     }
 
+    /**
+     * TODO commitLog 创建预处理封装的核心
+     * @param nextFilePath
+     * @param nextNextFilePath
+     * @param fileSize
+     * @return
+     */
     public MappedFile putRequestAndReturnMappedFile(String nextFilePath, String nextNextFilePath, int fileSize) {
         int canSubmitRequests = 2;
         if (this.messageStore.isTransientStorePoolEnable()) {
@@ -59,6 +66,7 @@ public class AllocateMappedFileService extends ServiceThread {
             }
         }
 
+        //封装一个AllocateRequest放在队列里，异步线程方式去获取执行
         AllocateRequest nextReq = new AllocateRequest(nextFilePath, fileSize);
         boolean nextPutOK = this.requestTable.putIfAbsent(nextFilePath, nextReq) == null;
 
@@ -95,7 +103,7 @@ public class AllocateMappedFileService extends ServiceThread {
             log.warn(this.getServiceName() + " service has exception. so return null");
             return null;
         }
-
+        // 阻塞等待AllocateMapFile线程创建好文件并返回
         AllocateRequest result = this.requestTable.get(nextFilePath);
         try {
             if (result != null) {
@@ -138,6 +146,9 @@ public class AllocateMappedFileService extends ServiceThread {
         }
     }
 
+    /**
+     * 根据队列中的AllocateRequest创建下一个commitLog
+     */
     public void run() {
         log.info(this.getServiceName() + " service started");
 
@@ -154,6 +165,9 @@ public class AllocateMappedFileService extends ServiceThread {
         boolean isSuccess = false;
         AllocateRequest req = null;
         try {
+            /**
+             * 获取已经存在的创建对象
+             */
             req = this.requestQueue.take();
             AllocateRequest expectedRequest = this.requestTable.get(req.getFilePath());
             if (null == expectedRequest) {
@@ -224,6 +238,10 @@ public class AllocateMappedFileService extends ServiceThread {
         return true;
     }
 
+    /**
+     * @see AllocateMappedFileService
+     * AllocateRequest是对预创建commitLog的封装，会在处理时预创建并将放入队列，在store启动时会启动AllocateMappedFileService的线程监听创建
+     */
     static class AllocateRequest implements Comparable<AllocateRequest> {
         // Full file path
         private String filePath;
