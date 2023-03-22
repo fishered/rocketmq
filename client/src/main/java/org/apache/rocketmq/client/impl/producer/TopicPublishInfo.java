@@ -66,14 +66,20 @@ public class TopicPublishInfo {
         this.haveTopicRouterInfo = haveTopicRouterInfo;
     }
 
+    /**
+     * 默认发送消息选择Queue
+     * @param lastBrokerName
+     */
     public MessageQueue selectOneMessageQueue(final String lastBrokerName) {
         if (lastBrokerName == null) {
+            //如果是第一次发送消息，那么通过计数器取模拿到一个queue
             return selectOneMessageQueue();
         } else {
             for (int i = 0; i < this.messageQueueList.size(); i++) {
                 int index = this.sendWhichQueue.incrementAndGet();
                 int pos = index % this.messageQueueList.size();
                 MessageQueue mq = this.messageQueueList.get(pos);
+                //如果上一次已经选中了broker，这一次尽量选中不同的broker，如果没有可用的broker了那只能再取模拿到一个queue
                 if (!mq.getBrokerName().equals(lastBrokerName)) {
                     return mq;
                 }

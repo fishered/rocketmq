@@ -100,6 +100,9 @@ public class MQClientInstance {
     /**
      * The container of the consumer in the current client. The key is the name of consumerGroup.
      */
+    /**
+     * broker在load加载的对应的消费者配置
+     */
     private final ConcurrentMap<String, MQConsumerInner> consumerTable = new ConcurrentHashMap<>();
 
     /**
@@ -246,23 +249,32 @@ public class MQClientInstance {
         return mqList;
     }
 
+    /**
+     * clientFactory 实例启动时要做的事情
+     * @throws MQClientException
+     */
     public void start() throws MQClientException {
-
+        //先进行加锁，保证启动实例只能有一个
         synchronized (this) {
             switch (this.serviceState) {
                 case CREATE_JUST:
                     this.serviceState = ServiceState.START_FAILED;
                     // If not specified,looking address from name server
+                    //如果没有对应的nameServer地址，则通过client找一个nameServer地址
                     if (null == this.clientConfig.getNamesrvAddr()) {
                         this.mQClientAPIImpl.fetchNameServerAddr();
                     }
                     // Start request-response channel
+                    //开启client remoting发送
                     this.mQClientAPIImpl.start();
                     // Start various schedule tasks
+                    // TODO 开启定时任务执行对应任务
                     this.startScheduledTask();
                     // Start pull service
+                    // TODO 开启定时拉取消息任务
                     this.pullMessageService.start();
                     // Start rebalance service
+                    // TODO 开启定时消费重排任务
                     this.rebalanceService.start();
                     // Start push service
                     this.defaultMQProducer.getDefaultMQProducerImpl().start(false);
@@ -279,6 +291,7 @@ public class MQClientInstance {
 
     private void startScheduledTask() {
         if (null == this.clientConfig.getNamesrvAddr()) {
+            //如果没有指定对应的nameServer，则需要定时查找nameServer
             this.scheduledExecutorService.scheduleAtFixedRate(() -> {
                 try {
                     MQClientInstance.this.mQClientAPIImpl.fetchNameServerAddr();
@@ -288,6 +301,7 @@ public class MQClientInstance {
             }, 1000 * 10, 1000 * 60 * 2, TimeUnit.MILLISECONDS);
         }
 
+        //定时修改对应的topic路由信息
         this.scheduledExecutorService.scheduleAtFixedRate(() -> {
             try {
                 MQClientInstance.this.updateTopicRouteInfoFromNameServer();
@@ -296,6 +310,7 @@ public class MQClientInstance {
             }
         }, 10, this.clientConfig.getPollNameServerInterval(), TimeUnit.MILLISECONDS);
 
+        //定时发送心跳，并清理下线的broker
         this.scheduledExecutorService.scheduleAtFixedRate(() -> {
             try {
                 MQClientInstance.this.cleanOfflineBroker();
@@ -305,6 +320,7 @@ public class MQClientInstance {
             }
         }, 1000, this.clientConfig.getHeartbeatBrokerInterval(), TimeUnit.MILLISECONDS);
 
+        //定时将对应的消费进度持久化
         this.scheduledExecutorService.scheduleAtFixedRate(() -> {
             try {
                 MQClientInstance.this.persistAllConsumerOffset();
@@ -313,6 +329,7 @@ public class MQClientInstance {
             }
         }, 1000 * 10, this.clientConfig.getPersistConsumerOffsetInterval(), TimeUnit.MILLISECONDS);
 
+        //定时调整线程池
         this.scheduledExecutorService.scheduleAtFixedRate(() -> {
             try {
                 MQClientInstance.this.adjustThreadPool();
@@ -331,6 +348,10 @@ public class MQClientInstance {
 
         // Consumer
         {
+            /**
+             * consumerTable
+             * @see ConsumerManager.registerConsumer
+             */
             for (Entry<String, MQConsumerInner> entry : this.consumerTable.entrySet()) {
                 MQConsumerInner impl = entry.getValue();
                 if (impl != null) {

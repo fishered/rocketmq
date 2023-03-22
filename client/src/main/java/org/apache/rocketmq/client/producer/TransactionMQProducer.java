@@ -83,6 +83,11 @@ public class TransactionMQProducer extends DefaultMQProducer {
         return this.defaultMQProducerImpl.sendMessageInTransaction(msg, tranExecuter, arg);
     }
 
+    /**
+     * TODO 事务消息发送的入口
+     * @param msg Transactional message to send.
+     * @param arg Argument used along with local transaction executor.
+     */
     @Override
     public TransactionSendResult sendMessageInTransaction(final Message msg,
         final Object arg) throws MQClientException {
